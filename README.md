@@ -1,41 +1,40 @@
-# Cybersecurity-Lab-Writeups
-# Network Forensics Analysis: JetBrains TeamCity Exploitation
+# Network Forensics Investigation: JetBrains TeamCity Exploitation (CVE-2024-27198)
 
-##  Summary
-This write-up documents the network forensics investigation of a compromised JetBrains TeamCity server using a raw packet capture (`Capture.pcap`). The analysis traces the adversary's lifecycle from the initial web shell deployment, through active reconnaissance, credential tampering, and a subsequent container escape attempt.
+# Overview
+This write-up documents the network forensics investigation of a compromised JetBrains TeamCity server using a raw packet capture (`Capture.pcap`). The analysis reconstructs the attacker's actions from initial exploitation to an attempted container breakout across 9 key investigation milestones.
 
 ---
 
-## Analysis & Incident Timeline
+# Technical Summary
 
-### Phase 1: Initial Exploitation & Persistent Access
- **Vector:** The adversary targeted a file upload capability within the TeamCity management interface.
- **Evidence:** Analysis of HTTP traffic revealed a suspicious file upload via a `POST` request directed at `/admin/pluginUpload.html`. The payload consisted of a malicious `.jsp` web shell compressed inside a `.zip` archive.
- **Analysis Insight:** This allowed the attacker to establish an interactive execution environment within the web server's context without needing valid SSH or remote desktop credentials.
+| Milestone | Investigation Step | Finding / Evidence |
+| :--- | :--- | :--- |
+| **01** | Source IP | Isolated external attacker IP address from packet capture |
+| **02** | Target Version | JetBrains TeamCity `2023.11.3` (found in HTTP response headers) |
+| **03** | Exploited Vulnerability | `CVE-2024-27198` (Authentication Bypass) |
+| **04** | Web Shell File | `.zip` archive containing a malicious `.jsp` web shell |
+| **05** | First Execution | Recorded exact UTC timestamp of the first web shell POST request |
+| **06** | Command Execution | URL-decoded POST parameters: `whoami`, `ls`, `id` |
+| **07** | Credential Tampering | Output redirection to `/tmp/creds.txt` |
+| **08** | Stored Artifact | String: `username:a1l4m,password:youarecompromised` |
+| **09** | Container Breakout | Command: `docker run --rm -it -v /:/host ubuntu chroot /host` |
 
-### Phase 2: Reconnaissance & Web Shell Interaction
- **Vector:** Interactive command execution via the deployed web shell.
- **Evidence:** The adversary interacted with the uploaded backdoor by sending standard HTTP `POST` requests to `/plugins/NSt8bHTg/NSt8bHTg.jsp`. System commands were passed through the `cmd=` parameter. 
- **Analysis Insight:** Because commands are transmitted via standard HTTP forms, the payloads were URL-encoded (e.g., spaces converted to `+` or `%20`, and specific operators converted to hex values). Analysts must decode these strings to reveal discovery actions like `whoami` and `ls`.
+---
 
-### Phase 3: Credential Tampering (Actions on Objectives)
- **Vector:** Stored Data Manipulation (MITRE ATT&CK T1565.001).
- **Evidence:** The adversary attempted to establish a persistent backdoor credential set by executing an encoded string that translates to:
-  ```bash
-  echo "username:a1l4m,password:youarecompromised" > /tmp/creds.txt
+## Key Attack Phases
 
-  Analysis Insight: Rather than scanning text streams manually, this activity can be isolated within a PCAP by searching packet bytes globally for generic Linux output redirection operators (> or %3E) combined with writable directories like /tmp.
+### 1. Initial Access & Persistence (CVE-2024-27198)
+The adversary targeted an unauthenticated administrative path to upload a `.zip` archive containing a `.jsp` web shell. This provided persistent interactive execution without requiring valid server credentials.
 
-Phase 4: Container Escape Attempt
-Vector: Privilege Escalation via Docker Volume Mount.
+### 2. Reconnaissance & Payload Decoding
+Commands sent to the web shell parameter (`cmd=`) were URL-encoded within HTTP POST requests. Decoding the parameters revealed system discovery actions (`whoami`, `ls`, `id`).
 
-Evidence: Recognizing they were isolated within a container, the adversary executed a classic breakout command via the web shell parameter:
+### 3. Credential Tampering (MITRE ATT&CK T1565.001)
+The attacker executed an encoded command to redirect backdoor credentials into a local file:
+```bash
+echo "username:a1l4m,password:youarecompromised" > /tmp/creds.txt
+
+
+4. Container Escape AttempT          
+Recognizing they were inside a container, the attacker attempted to mount the host root directory and escape isolation:
 docker run --rm -it -v /:/host ubuntu chroot /host
-Analysis Insight: The attacker utilized the -v /:/host flag to map the underlying host operating system's root directory (/) into the container's file system at /host. Using chroot, they attempted to pivot their root context to the host, bypassing container isolation boundaries.
-
-Key Blue Team Takeaways & Detection Indicators
-Web Shell Hunting: Monitor web application logs and network traffic for unusual POST requests targeting newly created or deep plugin paths (e.g., /plugins/*/*.jsp), especially when paired with execution parameters like cmd=, exec=, or shell=.
-
-URL-Decoding Pipelines: Threat hunting workflows must incorporate URL-decoding layers; raw PCAP bytes will obscure human-readable command flags behind hex codes.
-
-Container Escape Signatures: Alert on container infrastructure traffic containing interactive Docker commands utilizing root volume mapping flags (-v /:/ or --volume /:/), which serves as a high-fidelity indicator of an active breakout attempt.
