@@ -66,6 +66,8 @@ index=main source="WinEventLog:Security" (EventCode=4720 OR EventCode=4732)
 
 This returned 3 events: one 4720 and two 4732. Two 4732 events for one account was the first surprise, and working out which one mattered was part of the job.
 
+[![4720 and 4732 search results in Splunk](images/Screenshot%202026-11-10%20130326%281%29.png)](images/Screenshot%202026-11-10%20130326%281%29.png)
+
 ### 4.2 Linking the events by SID
 
 The 4732 event shows the member's `Account Name` as `-`. The name `svc_backup` does not appear in it at all. For local accounts the event identifies the member only by SID, so matching on the name would have found nothing.
@@ -77,6 +79,8 @@ The 4732 event shows the member's `Account Name` as `-`. The name `svc_backup` d
 
 The two SIDs match, which proves that the account created in the 4720 is the same account added to the group in the 4732. Only the final part of each SID is shown here. The machine specific prefix is removed.
 
+[![Both 4732 events showing member SID 1003](images/Screenshot%202026-11-10%20130414%281%29.png)](images/Screenshot%202026-11-10%20130414%281%29.png)
+
 ### 4.3 Telling the two 4732 events apart
 
 | Time | Group SID | Group name | Meaning |
@@ -85,6 +89,8 @@ The two SIDs match, which proves that the account created in the 4720 is the sam
 | 19:59:26.447 | S-1-5-32-544 | Administrators | The alert |
 
 I identified the dangerous event by the **group SID**, not by the group name. The name can be localised or renamed, while the SID for Administrators is the same on every Windows machine. A detection built on the SID is harder to dodge.
+
+[![4732 event for the Administrators group at 19:59:26](images/Screenshot%202026-11-10%20130437%281%29.png)](images/Screenshot%202026-11-10%20130437%281%29.png)
 
 ### 4.4 Who did it, and what else did the session do
 
@@ -100,6 +106,8 @@ index=main source="WinEventLog:Security" Logon_ID="0x107C4C85" earliest="11/09/2
 ```
 
 Event types in that window: **4720, 4722, 4724, 4728, 4732, 4738, 4799.**
+
+[![Event count by EventCode in the time window](images/Screenshot%202026-11-10%20185217.png)](images/Screenshot%202026-11-10%20185217.png)
 
 ```
 index=main source="WinEventLog:Security" Logon_ID="0x107C4C85" earliest="11/09/2026:19:57:00" latest="11/09/2026:20:00:30"
@@ -125,9 +133,14 @@ All times are 9 November 2026 unless stated.
 | 19:59:39.787 | 4799 | Administrators group membership listed by `net1.exe` |
 | 10 Nov 13:13:29 | 4726 | `svc_backup` deleted |
 
+[![4726 event showing svc_backup deleted at 13:13:29](images/Screenshot%202026-11-10%20131624%281%29.png)](images/Screenshot%202026-11-10%20131624%281%29.png)
+
 Notes on the timeline:
 
 1. The 4720 to 4722 sequence took about 63 milliseconds. The account is created disabled with no password required, and Windows immediately sets a password, clears the flag and enables it. This is how `net user` builds an account. It looks alarming on first read but is normal, so I do not count it as suspicious.
+
+   [![4720 attributes showing Password Not Required and the UAC change](images/Screenshot%202026-11-10%20130350.png)](images/Screenshot%202026-11-10%20130350.png)
+
 2. The 4799 at 19:59:39 is my own check, `net localgroup administrators`, run 13 seconds after the promotion. The process name `net1.exe` in the event confirms it. In a real case this would be the attacker confirming that the promotion worked, so the process name and the time gap would be worth recording.
 3. The account existed for about 17 hours before I deleted it. That is because I cleaned up the next day, so the gap says nothing about attacker behaviour.
 
@@ -172,6 +185,8 @@ Result: a 4732 at 13:16:45 on 10 November, same Subject and same Logon ID, Group
 powershell -command "Get-LocalUser | Select Name, SID"
 ```
 
+[![Three 4732 events including testuser added at 13:16:45](images/Screenshot%202026-11-10%20131917%281%29.png)](images/Screenshot%202026-11-10%20131917%281%29.png)
+
 There is **no 4720 anywhere near this event**, because no account was created. A rule that only looks for new accounts would miss it completely.
 
 I removed `testuser` from Administrators afterwards and confirmed it with `net localgroup administrators`, which listed only the built in Administrator and User.
@@ -215,6 +230,8 @@ index=main source="WinEventLog:Security" (EventCode=4720 OR EventCode=4732)
 1. **The member name was missing.** The 4732 event showed `-` in place of `svc_backup`. I had to match the two events by SID instead.
 2. **Two 4732 events for one account.** I had to work out that the first was the automatic Users group and only the second was the alert.
 3. **My first Logon ID search proved nothing.** I left the `EventCode=4720 OR EventCode=4732` filter in the search, so it could only ever return the same 3 events I already knew about. Removing the filter exposed the real session, with 1,697 events.
+
+   [![First Logon ID search that only returned the same 3 events](images/Screenshot%202026-11-10%20131158%281%29.png)](images/Screenshot%202026-11-10%20131158%281%29.png)
+
 4. **The Logon ID was not what I expected.** I assumed it would be a short session like in Alert 1. It turned out to be my whole desktop login, so I had to narrow by time window.
 5. **`Get-LocalUser` failed in Command Prompt.** It is a PowerShell command. Running it through `powershell -command "..."` fixed it.
-
